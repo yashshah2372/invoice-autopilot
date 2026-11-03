@@ -106,21 +106,17 @@ def _extract_anthropic(doc: Document) -> Invoice:
         for png in doc.images
     ]
     content.append({"type": "text", "text": _user_text(doc)})
-    tool = {
-        "name": "record_invoice",
-        "description": "Record the fields printed on the document.",
-        "input_schema": _inline_refs(Invoice.model_json_schema()),
-    }
-    resp = client.messages.create(
+    # Structured outputs: the response is constrained to the Invoice schema and parsed by the SDK.
+    resp = client.messages.parse(
         model=os.getenv("LLM_MODEL", "claude-sonnet-5-5"),
         max_tokens=4096,
         system=PROMPT,
-        tools=[tool],
-        tool_choice={"type": "tool", "name": "record_invoice"},
         messages=[{"role": "user", "content": content}],
+        output_format=Invoice,
     )
-    block = next(b for b in resp.content if b.type == "tool_use")
-    return Invoice.model_validate(block.input)
+    if resp.parsed_output is None:
+        raise RuntimeError(f"Model returned no structured output (stop_reason={resp.stop_reason})")
+    return resp.parsed_output
 
 
 def extract(doc: Document) -> Invoice:
