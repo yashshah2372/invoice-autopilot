@@ -11,6 +11,17 @@ from extractor import export, ingest, llm
 from extractor.schema import FIELD_LABELS
 from extractor.validate import needs_review, run_checks
 
+# Free Hugging Face Spaces run on ZeroGPU, which requires one @spaces.GPU function at startup.
+# This app runs on CPU (the LLM is called over an API), so this placeholder is never called.
+try:
+    import spaces
+
+    @spaces.GPU(duration=1)
+    def _zerogpu_placeholder():
+        return None
+except ImportError:
+    pass
+
 SAMPLES = sorted(str(p) for p in (Path(__file__).parent / "samples").glob("*.pdf"))
 ICON = {"pass": "✅", "fail": "⚠️", "skip": "➖"}
 
