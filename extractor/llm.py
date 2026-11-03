@@ -96,7 +96,20 @@ def _inline_refs(schema: dict) -> dict:
     return walk(schema)
 
 
+def _parse_json(text: str) -> Invoice:
+    """Pull the JSON object out of a model reply (tolerates code fences or stray prose)."""
+    t = text.strip()
+    if t.startswith("```"):
+        t = t.split("\n", 1)[1] if "\n" in t else t
+        t = t.rsplit("```", 1)[0]
+    i, j = t.find("{"), t.rfind("}")
+    if i == -1 or j == -1:
+        raise ValueError("No JSON object in model reply")
+    return Invoice.model_validate_json(t[i:j + 1])
+
+
 def _extract_anthropic(doc: Document) -> Invoice:
+    """Claude: ask for JSON matching the schema, validate with Pydantic, retry once on invalid output."""
     import anthropic
 
     client = anthropic.Anthropic()
@@ -105,18 +118,25 @@ def _extract_anthropic(doc: Document) -> Invoice:
                                      "data": base64.b64encode(png).decode()}}
         for png in doc.images
     ]
-    content.append({"type": "text", "text": _user_text(doc)})
-    # Structured outputs: the response is constrained to the Invoice schema and parsed by the SDK.
-    resp = client.messages.parse(
-        model=os.getenv("LLM_MODEL", "claude-sonnet-5-5"),
-        max_tokens=4096,
-        system=PROMPT,
-        messages=[{"role": "user", "content": content}],
-        output_format=Invoice,
-    )
-    if resp.parsed_output is None:
-        raise RuntimeError(f"Model returned no structured output (stop_reason={resp.stop_reason})")
-    return resp.parsed_output
+    schema = json.dumps(_inline_refs(Invoice.model_json_schema()), separators=(",", ":"))
+    content.append({"type": "text", "text": _user_text(doc) +
+                    "\n\nReply with ONLY one JSON object that matches this JSON Schema, no prose:\n" + schema})
+    messages = [{"role": "user", "content": content}]
+    model = os.getenv("LLM_MODEL", "claude-sonnet-5-5")
+
+    last_err = None
+    for _ in range(2):
+        resp = client.messages.create(model=model, max_tokens=4096, system=PROMPT, messages=messages)
+        text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+        try:
+            return _parse_json(text)
+        except Exception as e:  # invalid JSON or schema mismatch -> show the error and ask again
+            last_err = e
+            messages = messages + [
+                {"role": "assistant", "content": text},
+                {"role": "user", "content": f"That was not valid for the schema ({e}). Reply with only the corrected JSON object."},
+            ]
+    raise RuntimeError(f"Model did not return valid JSON: {last_err}")
 
 
 def extract(doc: Document) -> Invoice:
