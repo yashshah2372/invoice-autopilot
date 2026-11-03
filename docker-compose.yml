@@ -1,0 +1,26 @@
+services:
+  api:
+    build: .
+    env_file: .env
+    volumes:
+      - ledger:/data
+    ports:
+      - "8000:8000"
+
+  n8n:
+    image: n8nio/n8n:latest
+    environment:
+      - AUTOPILOT_API_URL=http://api:8000
+      - AUTOPILOT_API_KEY=${API_KEY:-}
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - GENERIC_TIMEZONE=${TZ:-UTC}
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - api
+
+volumes:
+  ledger:
+  n8n_data:
